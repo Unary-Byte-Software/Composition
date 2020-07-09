@@ -21,10 +21,6 @@ pub fn get_timestring() -> String {
 pub fn log(logtype: &str, logmessage: &str) -> String {
     format!("{} [{}] - {}", get_timestring(), logtype, logmessage)
 }
-// So I can do logger::new("log.txt") instead of logger::Logger::new("log.txt").
-pub fn new(logfile: &str) -> Logger {
-    Logger::new(logfile)
-}
 
 #[derive(Clone)]
 pub struct Logger {

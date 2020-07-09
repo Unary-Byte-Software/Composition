@@ -13,22 +13,41 @@ pub mod logger;
 pub mod mctypes;
 pub mod net;
 pub mod protocol;
+pub mod server;
 
 use serde::{Deserialize, Serialize};
+use server::ServerEvent;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 
 lazy_static! {
-    static ref log: logger::Logger = logger::new("log.txt");
-    static ref config: Config = { Config::from_file("composition.toml") };
+    static ref log: logger::Logger = logger::Logger::new("log.txt");
+    static ref config: Config = Config::from_file("composition.toml");
 }
 
 fn main() {
+    // Create the singleton Server.
+    let serverLock = Arc::new(Mutex::new(server::Server::new()));
+    let (tx, rx) = mpsc::channel();
+
     // Start the network thread.
-    std::thread::spawn(|| {
+    let n = tx.clone();
+    let c = serverLock.clone();
+    std::thread::spawn(move || {
         log.info("Network thread started");
-        net::start_listening();
+        net::start_listening(n, c);
     });
-    // Loop the main thread for now.
-    loop {}
+
+    // Main server loop
+    loop {
+        // Read any messages from the channels, and do a server tick.
+        if let Ok(event) = rx.try_recv() {
+            match event {
+                ServerEvent::PlayerConnected => serverLock.lock().unwrap().num_players += 1,
+                ServerEvent::PlayerDisconnected => serverLock.lock().unwrap().num_players -= 1,
+            }
+        }
+    }
 }
 
 // Not in it's own config module because of name conflicts.

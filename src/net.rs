@@ -7,10 +7,13 @@ extern crate radix64;
 
 use crate::mctypes::*;
 use crate::protocol::*;
+use crate::server::{Server, ServerEvent};
 use crate::{config, log};
 use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
-pub fn start_listening() {
+pub fn start_listening(tx: Sender<ServerEvent>, slock: Arc<Mutex<Server>>) {
     let server_address: &str = &format!("0.0.0.0:{}", config.port);
     let listener = TcpListener::bind(server_address);
     if listener.is_err() {
@@ -21,8 +24,10 @@ pub fn start_listening() {
             if stream.is_err() {
                 log.error("Could not connect to client");
             } else {
+                let c = tx.clone();
+                let s = slock.clone();
                 std::thread::spawn(move || {
-                    if let Err(e) = handle_client(stream.unwrap()) {
+                    if let Err(e) = handle_client(stream.unwrap(), s, c) {
                         log.error(&format!("Error when handling client: {}", e));
                     }
                 });
@@ -30,7 +35,11 @@ pub fn start_listening() {
         }
     }
 }
-fn handle_client(t: TcpStream) -> std::io::Result<()> {
+fn handle_client(
+    t: TcpStream,
+    slock: Arc<Mutex<Server>>,
+    c: Sender<ServerEvent>,
+) -> std::io::Result<()> {
     log.info("Got a client!");
     let mut gc = GameConnection {
         stream: t,
@@ -82,7 +91,18 @@ fn handle_client(t: TcpStream) -> std::io::Result<()> {
                         println!("{:?}", temp);
                     }
                 }
-                let response = MCString::from(format!("{{\n\t\"version\": {{\n\t\t\"name\": \"Composition 1.15.2\",\n\t\t\"protocol\": {}\n\t}},\n\t\"players\": {{\n\t\t\"max\": {},\n\t\t\"online\": 2147483648,\n\t\t\"sample\": [\n\t\t\t{{\n\t\t\t\t\"name\": \"fumolover12\",\n\t\t\t\t\"id\": \"4566e69f-c907-48ee-8d71-d7ba5aa00d20\"\n\t\t\t}}\n\t\t]\n\t}},\n\t\"description\": {{\n\t\t\"text\": \"{}\"\n\t}},\n\t\"favicon\": \"data:image/png;base64,{}\"\n}}", config.protocol_version, config.max_players, config.motd, base64_encoded_favicon));
+                #[allow(unused_assignments)]
+                let mut response = MCString::from(""); // Just a placeholder value.
+                {
+                    // Get the mutex lock.
+                    // .unwrap() because the mutex would already be poisoned by a panic, so no worries about panicking here.
+                    // Also no worries about blocking this thread, it's not important to be fast.
+                    let server = slock.lock().unwrap();
+                    response = MCString::from(
+                        format!("{{\n\t\"version\": {{\n\t\t\"name\": \"Composition 1.15.2\",\n\t\t\"protocol\": {}\n\t}},\n\t\"players\": {{\n\t\t\"max\": {},\n\t\t\"online\": {},\n\t\t\"sample\": [\n\t\t\t{{\n\t\t\t\t\"name\": \"fumolover12\",\n\t\t\t\t\"id\": \"4566e69f-c907-48ee-8d71-d7ba5aa00d20\"\n\t\t\t}}\n\t\t]\n\t}},\n\t\"description\": {{\n\t\t\"text\": \"{}\"\n\t}},\n\t\"favicon\": \"data:image/png;base64,{}\"\n}}", config.protocol_version, config.max_players, server.num_players, config.motd, base64_encoded_favicon),
+                    );
+                    // Release the lock.
+                }
                 let packet_id = MCVarInt::from(0x00);
                 let packet_len = MCVarInt::from(
                     packet_id.to_bytes().len() as i32 + response.to_bytes().len() as i32,
@@ -120,7 +140,10 @@ fn handle_client(t: TcpStream) -> std::io::Result<()> {
                 let login = LoginStart::read(&mut gc.stream)?;
                 log.info(&format!("{:?}", login));
             }
-            GameState::Play => {}
+            GameState::Play => {
+                c.send(ServerEvent::PlayerConnected).unwrap();
+                c.send(ServerEvent::PlayerDisconnected).unwrap();
+            }
             GameState::Closed => {
                 log.info(&format!(
                     "Client at {} closed connection",
