@@ -47,7 +47,11 @@ fn handle_client(
         protocol_version: 0,
     };
 
+    let mut gamestate_history = vec![GameState::Handshake];
     'main: loop {
+        if gamestate_history.last().unwrap() != &gc.state {
+            gamestate_history.push(gc.state.clone());
+        }
         match gc.state {
             GameState::Handshake => {
                 // Read the handshake packet.
@@ -142,9 +146,19 @@ fn handle_client(
             }
             GameState::Play => {
                 c.send(ServerEvent::PlayerConnected).unwrap();
-                c.send(ServerEvent::PlayerDisconnected).unwrap();
             }
             GameState::Closed => {
+                // Remove the Closed state.
+                let _ = gamestate_history.pop();
+                // TODO: Implement the different forms of disconnect.
+                match gamestate_history.last().unwrap() {
+                    GameState::Status => {}
+                    GameState::Login => {}
+                    GameState::Play => {
+                        c.send(ServerEvent::PlayerDisconnected).unwrap();
+                    }
+                    _ => {}
+                }
                 log.info(&format!(
                     "Client at {} closed connection",
                     gc.stream.peer_addr().unwrap()
@@ -158,7 +172,7 @@ fn handle_client(
 }
 
 #[allow(dead_code)]
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum GameState {
     Handshake,
     Status,

@@ -14,7 +14,7 @@ impl Server {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ServerEvent {
     PlayerConnected,
     PlayerDisconnected,
